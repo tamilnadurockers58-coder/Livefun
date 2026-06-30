@@ -1,0 +1,8 @@
+{
+  "name": "Telegram Premium Streaming",
+  "description": "A high-performance premium video streaming platform with Telegram integration, ImageKit storage, and direct UPI payments.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
