@@ -3,8 +3,9 @@ import { Video, User, Purchase, Settings, DashboardStats } from '../types';
 import { 
   Users, Video as VideoIcon, CreditCard, DollarSign, Clock, Check, X, Plus, 
   Trash2, Edit2, Upload, Eye, EyeOff, Save, Key, Mail, Sparkles, CheckCircle2,
-  AlertCircle
+  AlertCircle, Radio
 } from 'lucide-react';
+import AdminHostApplications from './AdminHostApplications';
 
 interface AdminDashboardProps {
   onClose: () => void;
@@ -13,12 +14,11 @@ interface AdminDashboardProps {
 export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   const [adminKey, setAdminKey] = useState(() => {
     try {
-      const tgUserSaved = localStorage.getItem('tg_user');
-      if (tgUserSaved) {
-        const tgUser = JSON.parse(tgUserSaved);
-        const isAdmin = tgUser.role === 'admin' || tgUser.telegram_id === '7966448931' || tgUser.telegram_id === '8940498738';
-        if (isAdmin) {
-          return tgUser.telegram_id;
+      const streamUserSaved = localStorage.getItem('stream_user');
+      if (streamUserSaved) {
+        const user = JSON.parse(streamUserSaved);
+        if (user.role === 'admin') {
+          return user.id;
         }
       }
     } catch (e) {}
@@ -26,11 +26,10 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   });
   const [isLoggedIn, setIsLoggedIn] = useState(() => {
     try {
-      const tgUserSaved = localStorage.getItem('tg_user');
-      if (tgUserSaved) {
-        const tgUser = JSON.parse(tgUserSaved);
-        const isAdmin = tgUser.role === 'admin' || tgUser.telegram_id === '7966448931' || tgUser.telegram_id === '8940498738';
-        if (isAdmin) {
+      const streamUserSaved = localStorage.getItem('stream_user');
+      if (streamUserSaved) {
+        const user = JSON.parse(streamUserSaved);
+        if (user.role === 'admin') {
           return true;
         }
       }
@@ -39,7 +38,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   });
   const [loginError, setLoginError] = useState('');
   const [passcode, setPasscode] = useState('');
-
+  
   // Dashboard state
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [videos, setVideos] = useState<Video[]>([]);
@@ -47,7 +46,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   const [settings, setSettings] = useState<Settings | null>(null);
   
   // Loading & active views
-  const [activeTab, setActiveTab] = useState<'stats' | 'videos' | 'purchases' | 'settings'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'videos' | 'purchases' | 'settings' | 'hosts'>('stats');
   const [isLoading, setIsLoading] = useState(false);
   
   // Forms states
@@ -83,10 +82,6 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   }, [isLoggedIn, activeTab]);
 
   const testAdminAuth = async () => {
-    if (adminKey === '8940498738' || adminKey === '7966448931') {
-      setIsLoggedIn(true);
-      return;
-    }
     try {
       const response = await fetch('/api/admin/stats', {
         headers: { 'admin-key': adminKey }
@@ -533,6 +528,17 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
         >
           <Mail className="w-4 h-4" /> Global UPI Settings
         </button>
+        <button
+          onClick={() => setActiveTab('hosts')}
+          className={`flex items-center gap-2 px-4 py-2 text-xs font-bold rounded-lg transition-colors ${
+            activeTab === 'hosts'
+              ? 'bg-[#2481cc] text-white'
+              : 'text-gray-400 hover:text-white hover:bg-[#24303f]/50'
+          }`}
+          id="admin-tab-hosts"
+        >
+          <Radio className="w-4 h-4" /> Host Management Console
+        </button>
       </div>
 
       {isLoading ? (
@@ -661,7 +667,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                     <thead>
                       <tr className="border-b border-[#24303f] text-gray-400">
                         <th className="pb-2.5 font-bold">User</th>
-                        <th className="pb-2.5 font-bold">Telegram ID</th>
+                        <th className="pb-2.5 font-bold">User Email</th>
                         <th className="pb-2.5 font-bold">Username</th>
                         <th className="pb-2.5 font-bold">Joined On</th>
                       </tr>
@@ -670,10 +676,10 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                       {stats.latestUsers.map((u) => (
                         <tr key={u.id} className="hover:bg-[#24303f]/20">
                           <td className="py-2.5 flex items-center gap-2.5">
-                            <img src={u.profile_image} alt={u.first_name} className="w-7 h-7 rounded-full object-cover" />
-                            <span className="font-medium text-white">{u.first_name} {u.last_name}</span>
+                            <img src={u.profile_image} alt={u.first_name || u.username} className="w-7 h-7 rounded-full object-cover" />
+                            <span className="font-medium text-white">{u.first_name || u.username} {u.last_name || ''}</span>
                           </td>
-                          <td className="py-2.5 font-mono text-[10px] text-gray-400">{u.telegram_id}</td>
+                          <td className="py-2.5 font-mono text-[10px] text-gray-400">{u.email || 'N/A'}</td>
                           <td className="py-2.5 text-[#2481cc] font-mono">@{u.username}</td>
                           <td className="py-2.5 text-gray-400">{new Date(u.created_at).toLocaleDateString()}</td>
                         </tr>
@@ -1087,6 +1093,12 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                   <Save className="w-4 h-4" /> Save Global Settings
                 </button>
               </form>
+            </div>
+          )}
+
+          {activeTab === 'hosts' && (
+            <div className="space-y-6 animate-fade-in" id="admin-hosts-tab">
+              <AdminHostApplications adminKey={adminKey} />
             </div>
           )}
         </>

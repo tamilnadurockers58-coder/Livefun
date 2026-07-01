@@ -6,8 +6,10 @@ import {
   getSettings,
   updateSettings,
   getUsers,
-  getUserByTelegramId,
-  createOrUpdateUser,
+  getUserById,
+  createOrUpdateProfile,
+  localSignUp,
+  localLogin,
   updateUserProfileImage,
   getVideos,
   getVideoById,
@@ -19,7 +21,21 @@ import {
   createPurchase,
   updatePurchaseStatus,
   getDashboardStats,
-  checkVideoAccess
+  checkVideoAccess,
+  getHostApplications,
+  submitHostApplication,
+  updateHostApplicationStatus,
+  deleteHostApplication,
+  getHostChatMessages,
+  sendHostChatMessage,
+  markHostChatAsRead,
+  getUnreadHostChatCount,
+  updateHostProfile,
+  getHostFollowers,
+  updateFollowerStatus,
+  getHostEarningsLogs,
+  getHostWithdrawals,
+  createWithdrawalRequest
 } from './server/db';
 import { upload, uploadToStorage } from './server/upload';
 
@@ -38,19 +54,36 @@ async function startServer() {
   app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 
   // Admin protection middleware helper
-  const verifyAdmin = (req: Request, res: Response, next: NextFunction) => {
-    const adminKey = req.headers['admin-key'] || req.query['admin_key'];
+  const verifyAdmin = async (req: Request, res: Response, next: NextFunction) => {
+    const adminKey = (req.headers['admin-key'] || req.query['admin_key']) as string;
     
-    if (adminKey === '7966448931') {
-      next();
-    } else {
-      res.status(403).json({ error: '403 Access Denied: Unauthorized admin access.' });
+    if (!adminKey) {
+      return res.status(403).json({ error: '403 Access Denied: Admin user ID is required.' });
+    }
+
+    try {
+      const user = await getUserById(adminKey);
+      if (user && user.role === 'admin') {
+        next();
+      } else {
+        res.status(403).json({ error: '403 Access Denied: Unauthorized admin access.' });
+      }
+    } catch (err) {
+      res.status(403).json({ error: '403 Access Denied: Error verifying admin privileges.' });
     }
   };
 
   // ============================================
   // API ROUTES
   // ============================================
+
+  // --- CONFIG ENDPOINTS ---
+  app.get('/api/config/supabase', (req: Request, res: Response) => {
+    res.json({
+      supabaseUrl: process.env.SUPABASE_URL || '',
+      supabaseKey: process.env.SUPABASE_KEY || ''
+    });
+  });
 
   // --- SETTINGS ---
   app.get('/api/settings', async (req: Request, res: Response) => {
@@ -90,71 +123,64 @@ async function startServer() {
     }
   });
 
-  // --- TELEGRAM LOGIN & USERS ---
-  app.post('/api/auth/telegram', async (req: Request, res: Response) => {
+  // --- CREDENTIALS AUTHENTICATION ---
+  app.post('/api/auth/register', async (req: Request, res: Response) => {
     try {
-      const authData = req.body;
-      const botToken = process.env.TELEGRAM_BOT_TOKEN;
-
-      // If they passed ID but no hash, and we have a BOT_TOKEN, reject it as invalid/mocked data.
-      if (!authData.id && authData.telegram_id) {
-        // Map from custom form if no bot token is set to facilitate preview transition
-        authData.id = authData.telegram_id;
+      const { id, email, username, profile_image, role } = req.body;
+      if (!id || !email || !username) {
+        return res.status(400).json({ error: 'id, email, and username are required.' });
       }
-
-      if (!authData.id) {
-        return res.status(400).json({ error: 'id (Telegram User ID) is required' });
-      }
-
-      // Cryptographic signature verification
-      if (botToken) {
-        const { hash, ...data } = authData;
-        if (!hash) {
-          return res.status(401).json({ error: 'Unauthorized: Missing Telegram verification hash.' });
-        }
-
-        // Filter and sort parameters alphabetically
-        const dataCheckString = Object.keys(data)
-          .sort()
-          .map(key => `${key}=${data[key]}`)
-          .join('\n');
-
-        const secretKey = crypto.createHash('sha256').update(botToken).digest();
-        const computedHash = crypto.createHmac('sha256', secretKey)
-          .update(dataCheckString)
-          .digest('hex');
-
-        if (computedHash !== hash) {
-          return res.status(401).json({ error: 'Unauthorized: Telegram hash signature verification failed.' });
-        }
-
-        // Session date check (maximum 30 days)
-        const authDate = Number(data.auth_date);
-        const now = Math.floor(Date.now() / 1000);
-        if (isNaN(authDate) || now - authDate > 86400 * 30) {
-          return res.status(401).json({ error: 'Unauthorized: Authentication session has expired.' });
-        }
-      } else {
-        console.warn("⚠️ TELEGRAM_BOT_TOKEN is not set in environment. Running in sandbox simulation mode.");
-      }
-
-      const telegram_id = String(authData.id);
-      const username = authData.username || '';
-      const first_name = authData.first_name || '';
-      const last_name = authData.last_name || '';
-      const profile_image = authData.photo_url || authData.profile_image || `https://api.dicebear.com/7.x/adventurer/svg?seed=${username || telegram_id}`;
-
-      const user = await createOrUpdateUser({
-        telegram_id,
-        username,
-        first_name,
-        last_name,
-        profile_image
-      });
-
+      const user = await createOrUpdateProfile({ id, email, username, profile_image, role });
       res.json(user);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/login', async (req: Request, res: Response) => {
+    try {
+      const { id, email, username, role } = req.body;
+      if (!id || !email) {
+        return res.status(400).json({ error: 'id and email are required.' });
+      }
+      let user = await getUserById(id);
+      if (!user) {
+        user = await createOrUpdateProfile({
+          id,
+          email,
+          username: username || email.split('@')[0],
+          role: role || 'user'
+        });
+      }
+      res.json(user);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/signup-local', async (req: Request, res: Response) => {
+    try {
+      const { email, password, username } = req.body;
+      if (!email || !password || !username) {
+        return res.status(400).json({ error: 'email, password, and username are required.' });
+      }
+      const user = await localSignUp({ email, password, username });
+      res.json(user);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/auth/login-local', async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res.status(400).json({ error: 'email and password are required.' });
+      }
+      const user = await localLogin({ email, password });
+      res.json(user);
+    } catch (err: any) {
+      res.status(400).json({ error: err.message });
     }
   });
 
@@ -174,10 +200,14 @@ async function startServer() {
   // --- VIDEO ENDPOINTS ---
   app.get('/api/videos', async (req: Request, res: Response) => {
     try {
-      const isAdmin = req.query.admin === 'true';
-      const adminKey = req.headers['admin-key'];
+      const adminKey = req.headers['admin-key'] as string;
+      let includeUnpublished = false;
       
-      const includeUnpublished = isAdmin && adminKey === '7966448931';
+      if (adminKey) {
+        const user = await getUserById(adminKey);
+        includeUnpublished = !!(user && user.role === 'admin');
+      }
+      
       const videos = await getVideos(includeUnpublished);
       res.json(videos);
     } catch (err: any) {
@@ -313,6 +343,216 @@ async function startServer() {
     try {
       const stats = await getDashboardStats();
       res.json(stats);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST APPLICATIONS ENDPOINTS ---
+  app.post('/api/host-applications', async (req: Request, res: Response) => {
+    try {
+      const { user_id, full_name, age, gender, telegram_username, email, experience, why_host, profile_photo_url } = req.body;
+      if (!user_id || !full_name || !age || !gender || !email || !experience || !why_host || !profile_photo_url) {
+        return res.status(400).json({ error: 'Missing required application fields.' });
+      }
+      const appRecord = await submitHostApplication({
+        user_id,
+        full_name,
+        age: Number(age),
+        gender,
+        telegram_username,
+        email,
+        experience,
+        why_host,
+        profile_photo_url
+      });
+      res.json(appRecord);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/admin/host-applications', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const apps = await getHostApplications();
+      res.json(apps);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/admin/host-applications/:id/status', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const { status } = req.body;
+      if (status !== 'approved' && status !== 'rejected') {
+        return res.status(400).json({ error: 'Status must be approved or rejected.' });
+      }
+      const updated = await updateHostApplicationStatus(req.params.id, status);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.delete('/api/admin/host-applications/:id', verifyAdmin, async (req: Request, res: Response) => {
+    try {
+      const deleted = await deleteHostApplication(req.params.id);
+      res.json({ success: deleted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST PROFILE / LIVE UPDATES ---
+  app.put('/api/host-profile/:userId', async (req: Request, res: Response) => {
+    try {
+      const { bio, live_thumbnail, first_name, last_name, profile_image } = req.body;
+      const updated = await updateHostProfile(req.params.userId, {
+        bio,
+        live_thumbnail,
+        first_name,
+        last_name,
+        profile_image
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/host-profile/:userId/live', async (req: Request, res: Response) => {
+    try {
+      const { is_live, live_thumbnail } = req.body;
+      const updated = await updateHostProfile(req.params.userId, {
+        is_live: !!is_live,
+        live_thumbnail
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST FOLLOWERS ENDPOINTS ---
+  app.get('/api/host-followers/:hostId', async (req: Request, res: Response) => {
+    try {
+      const followers = await getHostFollowers(req.params.hostId);
+      res.json(followers);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/host-followers/:hostId/:followerId/status', async (req: Request, res: Response) => {
+    try {
+      const { is_muted, is_banned } = req.body;
+      const updated = await updateFollowerStatus(req.params.hostId, req.params.followerId, {
+        is_muted,
+        is_banned
+      });
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/host-followers/:hostId/broadcast', async (req: Request, res: Response) => {
+    try {
+      const { message } = req.body;
+      if (!message) {
+        return res.status(400).json({ error: 'Broadcast message is required.' });
+      }
+      // Simulate sending broadcast notice to all active followers (log it)
+      console.log(`[Broadcast from Host ${req.params.hostId}] ${message}`);
+      res.json({ success: true, message: 'Broadcast alert successfully sent to all followers!' });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST EARNINGS ENDPOINTS ---
+  app.get('/api/host-earnings/:hostId', async (req: Request, res: Response) => {
+    try {
+      const logs = await getHostEarningsLogs(req.params.hostId);
+      res.json(logs);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST WITHDRAWALS ENDPOINTS ---
+  app.get('/api/host-withdrawals/:hostId', async (req: Request, res: Response) => {
+    try {
+      const withdrawals = await getHostWithdrawals(req.params.hostId);
+      res.json(withdrawals);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/host-withdrawals/:hostId', async (req: Request, res: Response) => {
+    try {
+      const { amount, payout_method, payout_details } = req.body;
+      if (!amount || !payout_method || !payout_details) {
+        return res.status(400).json({ error: 'Missing required withdrawal fields.' });
+      }
+      const newWd = await createWithdrawalRequest(req.params.hostId, {
+        amount: Number(amount),
+        payout_method,
+        payout_details
+      });
+      res.json(newWd);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // --- HOST CHAT ENDPOINTS ---
+  app.get('/api/host-chats/:hostId', async (req: Request, res: Response) => {
+    try {
+      const messages = await getHostChatMessages(req.params.hostId);
+      res.json(messages);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.post('/api/host-chats', async (req: Request, res: Response) => {
+    try {
+      const { sender_id, receiver_id, host_id, message_text, attachment_url, attachment_type, attachment_name } = req.body;
+      if (!sender_id || !receiver_id || !host_id) {
+        return res.status(400).json({ error: 'sender_id, receiver_id, and host_id are required.' });
+      }
+      const msg = await sendHostChatMessage({
+        sender_id,
+        receiver_id,
+        host_id,
+        message_text,
+        attachment_url,
+        attachment_type,
+        attachment_name
+      });
+      res.json(msg);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.put('/api/host-chats/:hostId/read', async (req: Request, res: Response) => {
+    try {
+      const { is_admin } = req.body;
+      await markHostChatAsRead(req.params.hostId, !!is_admin);
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  app.get('/api/host-chats/:hostId/unread', async (req: Request, res: Response) => {
+    try {
+      const is_admin = req.query.is_admin === 'true';
+      const count = await getUnreadHostChatCount(req.params.hostId, is_admin);
+      res.json({ unreadCount: count });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

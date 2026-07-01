@@ -1,10 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { User, Video, Purchase, Settings } from './types';
-import TelegramLogin from './components/TelegramLogin';
+import AuthForm from './components/AuthForm';
 import UserProfile from './components/UserProfile';
 import VideoPlayer from './components/VideoPlayer';
 import AdminDashboard from './components/AdminDashboard';
 import PaymentModal from './components/PaymentModal';
+import AdminLoginForm from './components/AdminLoginForm';
+import ApplyHostForm from './components/ApplyHostForm';
+import HostDashboard from './components/HostDashboard';
 import { 
   Send, User as UserIcon, ShieldAlert, Sparkles, Film, ArrowLeft, 
   Search, Play, Lock, AlertTriangle, HelpCircle, Mail, Key, Radio, Eye, CheckCircle2
@@ -17,7 +20,7 @@ export default function App() {
 
   // Authentication states
   const [user, setUser] = useState<User | null>(() => {
-    const saved = localStorage.getItem('tg_user');
+    const saved = localStorage.getItem('stream_user');
     return saved ? JSON.parse(saved) : null;
   });
   const [isAuthLoading, setIsAuthLoading] = useState(false);
@@ -44,18 +47,145 @@ export default function App() {
   // Toast indicator state
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
 
+  // Host view state within Profile tab
+  const [hostView, setHostView] = useState<'none' | 'apply' | 'dashboard'>('none');
+
   // Fetch videos and settings on load
   useEffect(() => {
     fetchCatalog();
     fetchSettings();
   }, []);
 
-  // Synchronize /admin path with Admin tab for authorized user
+  // Synchronize URL path with tab state and role-based access
   useEffect(() => {
-    if (window.location.pathname === '/admin' && user?.telegram_id === '7966448931') {
-      setActiveTab('admin');
-    }
+    const handlePopState = () => {
+      const path = window.location.pathname;
+      if (!user) {
+        // If not logged in, only allow /admin path (shows AdminLoginForm) or default (shows AuthForm)
+        if (path === '/admin') {
+          setActiveTab('admin');
+        } else if (path === '/host-dashboard') {
+          window.history.replaceState(null, '', '/');
+          setActiveTab('feed');
+        } else {
+          setActiveTab('feed');
+        }
+        return;
+      }
+
+      // If logged in, enforce role boundaries
+      if (user.role === 'admin') {
+        if (path !== '/admin') {
+          window.history.replaceState(null, '', '/admin');
+        }
+        setActiveTab('admin');
+      } else if (user.role === 'host') {
+        if (path !== '/host-dashboard') {
+          window.history.replaceState(null, '', '/host-dashboard');
+        }
+        setActiveTab('profile');
+        setHostView('dashboard');
+      } else {
+        // user role is 'user'
+        if (path === '/admin' || path === '/host-dashboard') {
+          window.history.replaceState(null, '', '/home');
+        } else if (path !== '/home') {
+          window.history.replaceState(null, '', '/home');
+        }
+        setActiveTab('feed');
+        setHostView('none');
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    handlePopState();
+
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
   }, [user]);
+
+  // Synchronize URL path with tab state when UI tabs are clicked
+  useEffect(() => {
+    if (!user) return;
+    const currentPath = window.location.pathname;
+    if (user.role === 'admin') {
+      if (currentPath !== '/admin') {
+        window.history.pushState(null, '', '/admin');
+      }
+      setActiveTab('admin');
+    } else if (user.role === 'host') {
+      if (activeTab === 'profile' && hostView === 'dashboard') {
+        if (currentPath !== '/host-dashboard') {
+          window.history.pushState(null, '', '/host-dashboard');
+        }
+      } else if (activeTab === 'feed') {
+        if (currentPath !== '/home') {
+          window.history.pushState(null, '', '/home');
+        }
+      } else {
+        if (currentPath !== '/host-dashboard') {
+          window.history.pushState(null, '', '/host-dashboard');
+        }
+        setActiveTab('profile');
+        setHostView('dashboard');
+      }
+    } else if (user.role === 'user') {
+      if (currentPath !== '/home') {
+        window.history.pushState(null, '', '/home');
+      }
+    }
+  }, [activeTab, hostView, user]);
+
+  // Session recovery on load
+  useEffect(() => {
+    async function recoverSession() {
+      try {
+        const { initSupabase } = await import('./lib/supabase');
+        const supabase = await initSupabase();
+        if (supabase) {
+          const { data: { session } } = await supabase.auth.getSession();
+          if (session?.user) {
+            // Fetch profile from 'profiles' table on Supabase
+            let role = 'user';
+            let profileData: any = null;
+            try {
+              const { data: pData, error: pError } = await supabase
+                .from('profiles')
+                .select('*')
+                .eq('id', session.user.id)
+                .maybeSingle();
+              if (!pError && pData) {
+                profileData = pData;
+                role = pData.role || 'user';
+              }
+            } catch (pErr) {
+              console.error('Session recovery: Error fetching profile from Supabase:', pErr);
+            }
+
+            const res = await fetch('/api/auth/login', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                id: session.user.id,
+                email: session.user.email,
+                username: profileData?.username || session.user.user_metadata?.username || session.user.email?.split('@')[0] || 'User',
+                role: role
+              })
+            });
+            if (res.ok) {
+              const dbUser = await res.json();
+              setUser(dbUser);
+              localStorage.setItem('stream_user', JSON.stringify(dbUser));
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Session recovery error:', err);
+      }
+    }
+    recoverSession();
+  }, []);
 
   // Global Production Security Restrictions
   useEffect(() => {
@@ -209,32 +339,41 @@ export default function App() {
 
   const handleLogin = (newUser: User) => {
     setUser(newUser);
-    localStorage.setItem('tg_user', JSON.stringify(newUser));
-    const isAdmin = newUser.telegram_id === '7966448931';
+    localStorage.setItem('stream_user', JSON.stringify(newUser));
+    const isAdmin = newUser.role === 'admin';
     if (isAdmin) {
-      localStorage.setItem('admin_key', newUser.telegram_id);
-      showToast(`Welcome Administrator, ${newUser.first_name}!`, 'success');
+      localStorage.setItem('admin_key', newUser.id);
+      showToast(`Welcome Administrator, ${newUser.first_name || newUser.username}!`, 'success');
     } else {
-      showToast(`Welcome back, ${newUser.first_name}!`, 'success');
+      showToast(`Welcome back, ${newUser.first_name || newUser.username}!`, 'success');
     }
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      const { getSupabase } = await import('./lib/supabase');
+      const supabase = getSupabase();
+      if (supabase) {
+        await supabase.auth.signOut();
+      }
+    } catch (err) {
+      console.error('Failed to sign out on Supabase:', err);
+    }
     setUser(null);
-    localStorage.removeItem('tg_user');
+    localStorage.removeItem('stream_user');
     localStorage.removeItem('admin_key');
     setActiveTab('feed');
-    showToast('Logged out of Telegram.', 'info');
+    showToast('Logged out successfully.', 'info');
   };
 
   const handleUpdateUser = (updatedUser: User) => {
     setUser(updatedUser);
-    localStorage.setItem('tg_user', JSON.stringify(updatedUser));
+    localStorage.setItem('stream_user', JSON.stringify(updatedUser));
   };
 
   const handleUnlockTrigger = (pausedAt: number) => {
     if (!user) {
-      showToast('Please log in with Telegram first to purchase and unlock streams.', 'error');
+      showToast('Please log in first to purchase and unlock streams.', 'error');
       return;
     }
     
@@ -291,29 +430,19 @@ export default function App() {
   const activeVideoStatus = activeVideoPurchase ? activeVideoPurchase.payment_status : null;
 
   const isAtAdminPath = window.location.pathname === '/admin';
-  const isUserAdmin = user?.telegram_id === '7966448931';
+  const isUserAdmin = user?.role === 'admin';
 
   if (isAtAdminPath && !isUserAdmin) {
     return (
-      <div className="min-h-screen bg-[#0e1621] text-gray-200 flex flex-col items-center justify-center p-6 font-sans" id="access-denied-view">
-        <div className="max-w-md w-full bg-[#17212b] border border-[#24303f] rounded-2xl p-8 shadow-2xl text-center relative overflow-hidden">
-          <div className="absolute -top-12 -right-12 w-32 h-32 bg-red-600/10 rounded-full blur-2xl pointer-events-none"></div>
-          <div className="w-16 h-16 bg-red-600/10 text-red-500 rounded-full flex items-center justify-center border border-red-500/20 mx-auto mb-6">
-            <ShieldAlert className="w-8 h-8" />
-          </div>
-          <h1 className="text-xl font-bold text-white tracking-tight">403 Access Denied</h1>
-          <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-            You do not have administrative clearance to access this control interface. Unauthorized access attempts are monitored and recorded.
-          </p>
-          <div className="mt-8 pt-6 border-t border-[#24303f]">
-            <button
-              onClick={() => { window.location.href = '/' }}
-              className="px-6 py-2.5 bg-[#2481cc] hover:bg-[#179cde] text-white rounded-xl text-xs font-bold transition duration-200"
-            >
-              Return to Stream Feed
-            </button>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#0e1621] text-gray-200 flex flex-col items-center justify-center p-6 font-sans" id="admin-login-wrapper">
+        <AdminLoginForm
+          onSuccess={(adminUser) => {
+            setUser(adminUser);
+            localStorage.setItem('stream_user', JSON.stringify(adminUser));
+            setActiveTab('admin');
+            setToast({ message: 'Welcome back, Administrator!', type: 'success' });
+          }}
+        />
       </div>
     );
   }
@@ -337,19 +466,10 @@ export default function App() {
           </div>
         )}
         <div className="w-full max-w-md my-auto space-y-6">
-          <div className="flex flex-col items-center justify-center text-center space-y-3">
-            <div className="w-14 h-14 bg-[#2481cc] text-white rounded-2xl flex items-center justify-center shadow-lg shadow-[#2481cc]/25">
-              <Send className="w-8 h-8 transform -rotate-12 translate-x-0.5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white tracking-tight">Telegram Premium Portal</h2>
-              <p className="text-xs text-gray-400">Please connect your Telegram account to continue</p>
-            </div>
-          </div>
-          <TelegramLogin onLogin={handleLogin} isLoading={isAuthLoading} />
+          <AuthForm onLogin={handleLogin} />
         </div>
         <footer className="text-center text-[10px] text-gray-600 font-medium">
-          <p>© 2026 Telegram Premium Streaming platform. All rights reserved.</p>
+          <p>© 2026 Premium Streaming platform. All rights reserved.</p>
         </footer>
       </div>
     );
@@ -414,7 +534,12 @@ export default function App() {
 
           {/* Logo Brand */}
           <div 
-            onClick={() => { setActiveTab('feed'); setActiveVideo(videos[0] || null); }} 
+            onClick={() => { 
+              if (!user || user.role === 'user') {
+                setActiveTab('feed'); 
+                setActiveVideo(videos[0] || null); 
+              }
+            }} 
             className="flex items-center gap-2.5 cursor-pointer hover:opacity-90 active:scale-98 transition"
             id="brand-logo"
           >
@@ -429,24 +554,14 @@ export default function App() {
 
           {/* Navigation Items */}
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setActiveTab('feed')}
-              className={`text-xs font-bold px-3 py-1.5 rounded-lg transition ${
-                activeTab === 'feed' ? 'bg-[#2481cc] text-white' : 'text-gray-400 hover:text-white'
-              }`}
-            >
-              Stream Feed
-            </button>
-
-            {user && user.telegram_id === '7966448931' && (
+            {(!user || user.role === 'user') && (
               <button
-                onClick={() => setActiveTab('admin')}
+                onClick={() => setActiveTab('feed')}
                 className={`text-xs font-bold px-3 py-1.5 rounded-lg transition ${
-                  activeTab === 'admin' ? 'bg-[#2481cc] text-white shadow shadow-[#2481cc]/50' : 'text-amber-400 bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/15'
+                  activeTab === 'feed' ? 'bg-[#2481cc] text-white' : 'text-gray-400 hover:text-white'
                 }`}
-                id="header-admin-btn"
               >
-                Admin Panel
+                Stream Feed
               </button>
             )}
 
@@ -461,11 +576,11 @@ export default function App() {
                 >
                   <img 
                     src={user.profile_image} 
-                    alt={user.first_name} 
+                    alt={user.first_name || user.username} 
                     className="w-5 h-5 rounded-full object-cover border border-[#2481cc]/20" 
                   />
                   <div className="flex flex-col leading-tight">
-                    <span className="font-bold text-[11px] block">{user.first_name}</span>
+                    <span className="font-bold text-[11px] block">{user.first_name || user.username}</span>
                     {user.username && <span className="text-[9px] text-[#2481cc] block">@{user.username}</span>}
                   </div>
                 </button>
@@ -485,7 +600,7 @@ export default function App() {
         {/* =========================================================
             VIEW 1: SECURE ADMIN CONSOLE
             ========================================================= */}
-        {activeTab === 'admin' && user && user.telegram_id === '7966448931' && (
+        {activeTab === 'admin' && user && user.role === 'admin' && (
           <div className="min-h-[70vh]">
             <AdminDashboard onClose={() => setActiveTab('feed')} />
           </div>
@@ -498,16 +613,35 @@ export default function App() {
           <div className="min-h-[70vh] flex items-center justify-center animate-fade-in" id="profile-container-view">
             {user ? (
               <div className="w-full">
-                <UserProfile 
-                  user={user} 
-                  onLogout={handleLogout} 
-                  onUpdateUser={handleUpdateUser}
-                  onSelectVideo={handleSelectVideoFromLibrary}
-                />
+                {hostView === 'apply' ? (
+                  <ApplyHostForm
+                    user={user}
+                    onBack={() => setHostView('none')}
+                    onSuccess={() => {
+                      setHostView('none');
+                      showToast('Application submitted successfully!', 'success');
+                    }}
+                  />
+                ) : hostView === 'dashboard' ? (
+                  <HostDashboard
+                    user={user}
+                    onUpdateUser={handleUpdateUser}
+                    onBack={() => setHostView('none')}
+                  />
+                ) : (
+                  <UserProfile 
+                    user={user} 
+                    onLogout={handleLogout} 
+                    onUpdateUser={handleUpdateUser}
+                    onSelectVideo={handleSelectVideoFromLibrary}
+                    onApplyHost={() => setHostView('apply')}
+                    onOpenHostDashboard={() => setHostView('dashboard')}
+                  />
+                )}
               </div>
             ) : (
               <div className="w-full flex justify-center">
-                <TelegramLogin onLogin={handleLogin} isLoading={isAuthLoading} />
+                <AuthForm onLogin={handleLogin} />
               </div>
             )}
           </div>

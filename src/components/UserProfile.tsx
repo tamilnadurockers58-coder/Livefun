@@ -1,15 +1,24 @@
 import React, { useState, useEffect } from 'react';
 import { User, Purchase } from '../types';
-import { Camera, Shield, FileVideo, History, AlertCircle, CheckCircle2, Clock, XCircle, LogOut } from 'lucide-react';
+import { Camera, Shield, FileVideo, History, AlertCircle, CheckCircle2, Clock, XCircle, LogOut, Sparkles, Radio } from 'lucide-react';
 
 interface UserProfileProps {
   user: User;
   onLogout: () => void;
   onUpdateUser: (updatedUser: User) => void;
   onSelectVideo: (videoId: string) => void;
+  onApplyHost?: () => void;
+  onOpenHostDashboard?: () => void;
 }
 
-export default function UserProfile({ user, onLogout, onUpdateUser, onSelectVideo }: UserProfileProps) {
+export default function UserProfile({ 
+  user, 
+  onLogout, 
+  onUpdateUser, 
+  onSelectVideo,
+  onApplyHost,
+  onOpenHostDashboard 
+}: UserProfileProps) {
   const [purchases, setPurchases] = useState<Purchase[]>([]);
   const [isLoadingPurchases, setIsLoadingPurchases] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -138,14 +147,14 @@ export default function UserProfile({ user, onLogout, onUpdateUser, onSelectVide
         {successMsg && <p className="text-xs text-emerald-400 mb-2">{successMsg}</p>}
 
         <h3 className="text-lg font-bold text-white tracking-tight">
-          {user.first_name} {user.last_name}
+          {user.first_name || user.username} {user.last_name || ''}
         </h3>
         <p className="text-xs text-[#2481cc] font-mono mt-0.5">@{user.username}</p>
 
         <div className="mt-5 pt-5 border-t border-[#24303f] text-left space-y-3">
           <div className="flex justify-between items-center text-xs">
-            <span className="text-gray-400 font-medium">Telegram ID</span>
-            <span className="text-gray-200 font-mono text-[11px]">{user.telegram_id}</span>
+            <span className="text-gray-400 font-medium">User Email</span>
+            <span className="text-gray-200 font-mono text-[11px]">{user.email || 'N/A'}</span>
           </div>
           <div className="flex justify-between items-center text-xs">
             <span className="text-gray-400 font-medium">Joined Platform</span>
@@ -155,9 +164,29 @@ export default function UserProfile({ user, onLogout, onUpdateUser, onSelectVide
           </div>
         </div>
 
+        {user.role === 'host' ? (
+          <button
+            onClick={onOpenHostDashboard}
+            className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 bg-[#2481cc] hover:bg-[#179cde] text-white rounded-xl text-xs font-bold transition duration-200 shadow shadow-[#2481cc]/25"
+            id="host-dashboard-btn"
+          >
+            <Radio className="w-4 h-4" /> Host Dashboard
+          </button>
+        ) : (
+          user.role !== 'admin' && (
+            <button
+              onClick={onApplyHost}
+              className="w-full mt-4 flex items-center justify-center gap-2 py-2.5 border border-amber-500/20 text-amber-400 hover:bg-amber-500/10 rounded-xl text-xs font-bold transition duration-200"
+              id="apply-host-btn"
+            >
+              <Sparkles className="w-4 h-4 text-amber-400" /> Apply to Host
+            </button>
+          )
+        )}
+
         <button
           onClick={onLogout}
-          className="w-full mt-6 flex items-center justify-center gap-2 py-2 border border-rose-500/20 text-rose-400 hover:bg-rose-500/10 rounded-xl text-xs font-bold transition duration-200"
+          className="w-full mt-3 flex items-center justify-center gap-2 py-2 border border-rose-500/20 text-rose-400 hover:bg-rose-500/10 rounded-xl text-xs font-bold transition duration-200"
           id="logout-btn"
         >
           <LogOut className="w-4 h-4" /> Log Out
