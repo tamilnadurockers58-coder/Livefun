@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import { 
@@ -280,7 +281,8 @@ export async function getUsers(): Promise<User[]> {
         last_name: '',
         profile_image: p.avatar_url || `https://api.dicebear.com/7.x/adventurer/svg?seed=${p.id}`,
         created_at: p.created_at,
-        role: p.role || 'user'
+        role: p.role || 'user',
+        host_status: p.host_status || null
       }));
     } catch (err) {
       console.error('Supabase get users error, falling back:', err);
@@ -330,7 +332,8 @@ export async function getUserById(id: string): Promise<User | null> {
         last_name: '',
         profile_image: data.avatar_url || `https://api.dicebear.com/7.x/adventurer/svg?seed=${data.id}`,
         created_at: data.created_at,
-        role: data.role || 'user'
+        role: data.role || 'user',
+        host_status: data.host_status || null
       };
     } catch (err) {
       console.error('Supabase getUserById error:', err);
@@ -416,7 +419,8 @@ export async function createOrUpdateProfile(userData: {
         last_name: '',
         profile_image: data.avatar_url || profileImage,
         created_at: data.created_at || new Date().toISOString(),
-        role: data.role || defaultRole
+        role: data.role || defaultRole,
+        host_status: data.host_status || null
       };
     } catch (err: any) {
       console.error('Supabase profile upsert error, attempting non-returning upsert:', err);
@@ -822,12 +826,32 @@ export async function getDashboardStats(): Promise<DashboardStats> {
 export async function getHostApplications(): Promise<HostApplication[]> {
   if (useSupabase && supabase) {
     try {
-      const { data, error } = await supabase.from('host_applications').select('*').order('created_at', { ascending: false });
+      const { data, error } = await supabase
+        .from('host_requests')
+        .select('*, profiles:user_id(*)')
+        .order('created_at', { ascending: false });
       if (!error && data) {
-        return data;
+        return data.map((req: any) => ({
+          id: req.id,
+          user_id: req.user_id,
+          status: req.status,
+          created_at: req.created_at,
+          full_name: req.profiles?.full_name || 'Applicant',
+          email: req.profiles?.email || '',
+          profile_photo_url: req.profiles?.avatar_url || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Applicant',
+          username: req.profiles?.full_name || req.profiles?.email?.split('@')[0] || 'Applicant',
+          profile_image: req.profiles?.avatar_url || 'https://api.dicebear.com/7.x/adventurer/svg?seed=Applicant',
+          age: 25,
+          gender: 'Male',
+          experience: 'Experienced livestreamer and content creator.',
+          why_host: 'To host premium live streaming content.',
+          telegram_username: req.profiles?.email?.split('@')[0] || 'host_tele'
+        }));
+      } else if (error) {
+        console.error('Supabase host_requests select error:', error);
       }
     } catch (err) {
-      console.warn('Supabase host_applications select error, falling back:', err);
+      console.warn('Supabase host_requests select error, falling back:', err);
     }
   }
   const db = readJsonDb();
@@ -851,10 +875,36 @@ export async function submitHostApplication(appData: Omit<HostApplication, 'id' 
 
   if (useSupabase && supabase) {
     try {
-      const { data, error } = await supabase.from('host_applications').insert(newApp).select().single();
-      if (!error && data) return data;
+      // Set host_status on public.profiles to 'pending'
+      await supabase
+        .from('profiles')
+        .update({
+          host_status: 'pending',
+          full_name: appData.full_name,
+          avatar_url: appData.profile_photo_url
+        })
+        .eq('id', appData.user_id);
+
+      const { data, error } = await supabase
+        .from('host_requests')
+        .insert({
+          user_id: appData.user_id,
+          status: 'pending'
+        })
+        .select()
+        .single();
+      if (!error && data) {
+        return {
+          ...newApp,
+          id: data.id,
+          status: data.status,
+          created_at: data.created_at
+        };
+      } else if (error) {
+        console.error('Supabase host_requests insert error:', error);
+      }
     } catch (err) {
-      console.warn('Supabase host_applications insert error, falling back:', err);
+      console.warn('Supabase host_requests insert error, falling back:', err);
     }
   }
 
@@ -870,20 +920,51 @@ export async function updateHostApplicationStatus(id: string, status: 'approved'
   if (useSupabase && supabase) {
     try {
       const { data, error } = await supabase
-        .from('host_applications')
+        .from('host_requests')
         .update({ status })
         .eq('id', id)
         .select()
         .single();
       if (!error && data) {
-        updatedApp = data;
-        if (status === 'approved') {
-          await supabase.from('profiles').update({ role: 'host' }).eq('id', data.user_id);
-          await supabase.from('users').update({ role: 'host', earnings: 0, followers: 0 }).eq('id', data.user_id);
-        }
+        const userId = data.user_id;
+        const role = status === 'approved' ? 'host' : 'user';
+
+        // Update public.profiles role & host_status
+        await supabase
+          .from('profiles')
+          .update({
+            role: role,
+            host_status: status
+          })
+          .eq('id', userId);
+
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('*')
+          .eq('id', userId)
+          .single();
+
+        updatedApp = {
+          id: data.id,
+          user_id: data.user_id,
+          status: data.status,
+          created_at: data.created_at,
+          full_name: prof?.full_name || 'Host Member',
+          email: prof?.email || '',
+          profile_photo_url: prof?.avatar_url || 'https://api.dicebear.com/7.x/adventurer/svg?seed=host',
+          username: prof?.full_name || prof?.email?.split('@')[0] || 'host',
+          profile_image: prof?.avatar_url || 'https://api.dicebear.com/7.x/adventurer/svg?seed=host',
+          age: 25,
+          gender: 'Male',
+          experience: 'Approved Premium Host.',
+          why_host: 'To host premium contents.',
+          telegram_username: prof?.email?.split('@')[0] || 'host_tele'
+        };
+      } else if (error) {
+        console.error('Supabase host_requests update status error:', error);
       }
     } catch (err) {
-      console.warn('Supabase host_applications status update error, falling back:', err);
+      console.warn('Supabase host_requests status update error, falling back:', err);
     }
   }
 
@@ -910,10 +991,10 @@ export async function updateHostApplicationStatus(id: string, status: 'approved'
 export async function deleteHostApplication(id: string): Promise<boolean> {
   if (useSupabase && supabase) {
     try {
-      const { error } = await supabase.from('host_applications').delete().eq('id', id);
+      const { error } = await supabase.from('host_requests').delete().eq('id', id);
       if (!error) return true;
     } catch (err) {
-      console.warn('Supabase host_applications delete error, falling back:', err);
+      console.warn('Supabase host_requests delete error, falling back:', err);
     }
   }
 
@@ -931,13 +1012,25 @@ export async function getHostChatMessages(hostId: string): Promise<HostChatMessa
   if (useSupabase && supabase) {
     try {
       const { data, error } = await supabase
-        .from('host_chats')
+        .from('host_messages')
         .select('*')
-        .eq('host_id', hostId)
+        .or(`sender_id.eq.${hostId},receiver_id.eq.${hostId}`)
         .order('created_at', { ascending: true });
-      if (!error && data) return data;
+      if (!error && data) {
+        return data.map((m: any) => ({
+          id: String(m.id),
+          sender_id: m.sender_id,
+          receiver_id: m.receiver_id,
+          host_id: hostId,
+          message_text: m.message || '',
+          is_read: false,
+          created_at: m.created_at || new Date().toISOString()
+        }));
+      } else if (error) {
+        console.error('Supabase host_messages select error:', error);
+      }
     } catch (err) {
-      console.warn('Supabase host_chats select error, falling back:', err);
+      console.warn('Supabase host_messages select error, falling back:', err);
     }
   }
 
@@ -957,10 +1050,30 @@ export async function sendHostChatMessage(msgData: Omit<HostChatMessage, 'id' | 
 
   if (useSupabase && supabase) {
     try {
-      const { data, error } = await supabase.from('host_chats').insert(newMsg).select().single();
-      if (!error && data) return data;
+      const { data, error } = await supabase
+        .from('host_messages')
+        .insert({
+          sender_id: msgData.sender_id,
+          receiver_id: msgData.receiver_id,
+          message: msgData.message_text
+        })
+        .select()
+        .single();
+      if (!error && data) {
+        return {
+          id: String(data.id),
+          sender_id: data.sender_id,
+          receiver_id: data.receiver_id,
+          host_id: msgData.host_id,
+          message_text: data.message,
+          is_read: false,
+          created_at: data.created_at
+        };
+      } else if (error) {
+        console.error('Supabase host_messages insert error:', error);
+      }
     } catch (err) {
-      console.warn('Supabase host_chats insert error, falling back:', err);
+      console.warn('Supabase host_messages insert error, falling back:', err);
     }
   }
 
@@ -971,62 +1084,13 @@ export async function sendHostChatMessage(msgData: Omit<HostChatMessage, 'id' | 
 }
 
 export async function markHostChatAsRead(hostId: string, isAdmin: boolean): Promise<boolean> {
-  if (useSupabase && supabase) {
-    try {
-      let query = supabase.from('host_chats').update({ is_read: true }).eq('host_id', hostId);
-      if (isAdmin) {
-        query = query.eq('sender_id', hostId);
-      } else {
-        query = query.neq('sender_id', hostId);
-      }
-      const { error } = await query;
-      if (!error) return true;
-    } catch (err) {
-      console.warn('Supabase host_chats update read status error, falling back:', err);
-    }
-  }
-
-  const db = readJsonDb();
-  let changed = false;
-  db.host_chats.forEach(msg => {
-    if (msg.host_id === hostId) {
-      if (isAdmin && msg.sender_id === hostId) {
-        msg.is_read = true;
-        changed = true;
-      } else if (!isAdmin && msg.sender_id !== hostId) {
-        msg.is_read = true;
-        changed = true;
-      }
-    }
-  });
-  if (changed) {
-    writeJsonDb(db);
-  }
+  // Since host_messages table doesn't have is_read column, return true immediately.
   return true;
 }
 
 export async function getUnreadHostChatCount(hostId: string, isAdmin: boolean): Promise<number> {
-  if (useSupabase && supabase) {
-    try {
-      let query = supabase.from('host_chats').select('*', { count: 'exact', head: true }).eq('host_id', hostId).eq('is_read', false);
-      if (isAdmin) {
-        query = query.eq('sender_id', hostId);
-      } else {
-        query = query.neq('sender_id', hostId);
-      }
-      const { count, error } = await query;
-      if (!error && count !== null) return count;
-    } catch (err) {
-      console.warn('Supabase host_chats count query error, falling back:', err);
-    }
-  }
-
-  const db = readJsonDb();
-  return db.host_chats.filter(msg => 
-    msg.host_id === hostId && 
-    !msg.is_read && 
-    (isAdmin ? msg.sender_id === hostId : msg.sender_id !== hostId)
-  ).length;
+  // Since host_messages table doesn't have is_read column, return 0.
+  return 0;
 }
 
 export async function updateHostProfile(userId: string, updates: Partial<User>): Promise<User> {

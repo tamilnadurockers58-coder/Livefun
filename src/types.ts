@@ -7,6 +7,7 @@ export interface User {
   profile_image: string;
   created_at: string;
   role?: 'user' | 'admin' | 'host';
+  host_status?: 'pending' | 'approved' | 'rejected' | null;
   telegram_id?: string;
   live_thumbnail?: string;
   is_live?: boolean;

@@ -1502,6 +1502,186 @@ export default function HostDashboard({ user, onUpdateUser, onBack }: HostDashbo
             </button>
           </form>
         )}
+
+        {/* VIEW 5: HOST PROFILE SETTINGS WITH INTEGRATED ADMIN CHAT */}
+        {activeTab === 'profile' && (
+          <div className="space-y-8">
+            <form onSubmit={handleSaveProfile} className="space-y-5 animate-fade-in" id="panel-profile">
+              <div className="flex items-center gap-2 pb-2 border-b border-[#24303f]/40">
+                <Settings className="w-5 h-5 text-[#2481cc]" />
+                <h3 className="text-sm font-bold text-white tracking-tight">Host Public Profile Configuration</h3>
+              </div>
+
+              {profileSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs animate-fade-in">
+                  {profileSuccess}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">First Name</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-[#24303f]/50 border border-[#24303f] rounded-xl text-white focus:outline-none focus:border-[#2481cc] transition"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Last Name</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    className="w-full px-3 py-2 text-xs bg-[#24303f]/50 border border-[#24303f] rounded-xl text-white focus:outline-none focus:border-[#2481cc] transition"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Host Bio</label>
+                <textarea
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
+                  placeholder="Write a brief bio that will show on your profile card..."
+                  rows={3}
+                  className="w-full px-3 py-2 text-xs bg-[#24303f]/50 border border-[#24303f] rounded-xl text-white focus:outline-none focus:border-[#2481cc] transition resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-1.5">Public Profile Image URL</label>
+                <input
+                  type="text"
+                  value={profileImage}
+                  onChange={(e) => setProfileImage(e.target.value)}
+                  className="w-full px-3 py-2 text-xs bg-[#24303f]/50 border border-[#24303f] rounded-xl text-white focus:outline-none focus:border-[#2481cc] transition font-mono text-[10px]"
+                />
+              </div>
+
+              <button
+                type="submit"
+                disabled={isSavingProfile}
+                className="px-5 py-2.5 bg-[#2481cc] hover:bg-[#179cde] disabled:bg-[#2481cc]/50 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow shadow-[#2481cc]/20 cursor-pointer"
+              >
+                {isSavingProfile ? <Loader className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />} Save Profile
+              </button>
+            </form>
+
+            {/* Admin Chat Section on Host Profile page */}
+            <div className="mt-8 pt-8 border-t border-[#24303f]/50 space-y-4" id="host-profile-admin-chat">
+              <div className="flex items-center gap-2 pb-2 border-b border-[#24303f]/40">
+                <MessageSquare className="w-5 h-5 text-[#2481cc]" />
+                <h3 className="text-sm font-bold text-white tracking-tight">Admin Chat</h3>
+              </div>
+              <p className="text-xs text-gray-400">
+                Have any questions or need configuration support? Message our administration team privately.
+              </p>
+              
+              <div className="bg-[#17212b]/40 border border-[#24303f]/60 rounded-2xl p-4 flex flex-col h-[320px]">
+                {/* Messages Log */}
+                <div className="flex-1 overflow-y-auto space-y-3.5 pr-1" id="host-profile-chat-messages">
+                  {messages.length === 0 ? (
+                    <div className="flex-1 flex flex-col items-center justify-center text-center p-6 text-gray-500 h-full">
+                      <MessageSquare className="w-8 h-8 opacity-25 mb-2" />
+                      <p className="text-xs">No administrative chat messages yet.</p>
+                    </div>
+                  ) : (
+                    messages.map((msg) => {
+                      const isAdminMsg = msg.sender_id === 'admin-maxwell';
+                      return (
+                        <div 
+                          key={msg.id} 
+                          className={`flex flex-col max-w-[85%] ${isAdminMsg ? 'self-start items-start' : 'self-end items-end ml-auto'}`}
+                        >
+                          <span className="text-[9px] text-gray-400 mb-1 font-bold">
+                            {isAdminMsg ? 'Admin' : 'You'}
+                          </span>
+                          <div className={`p-3 rounded-2xl text-xs ${
+                            isAdminMsg 
+                              ? 'bg-[#24303f] text-white rounded-tl-none border border-[#24303f]/50' 
+                              : 'bg-[#2481cc] text-white rounded-tr-none shadow shadow-[#2481cc]/15'
+                          }`}>
+                            {msg.attachment_url && (
+                              <div className="mb-2 max-w-full overflow-hidden rounded-lg border border-black/10">
+                                {msg.attachment_type === 'image' ? (
+                                  <img src={msg.attachment_url} alt="Attachment" className="max-h-40 object-cover rounded-lg" referrerPolicy="no-referrer" />
+                                ) : (
+                                  <a 
+                                    href={msg.attachment_url} 
+                                    target="_blank" 
+                                    rel="noreferrer"
+                                    className="flex items-center gap-2 p-2 bg-black/15 hover:bg-black/25 text-white transition text-[10px] font-mono"
+                                  >
+                                    <FileText className="w-4 h-4 shrink-0" />
+                                    <span className="truncate">{msg.attachment_name || 'Attached File'}</span>
+                                    <Download className="w-3 h-3 shrink-0" />
+                                  </a>
+                                )}
+                              </div>
+                            )}
+                            <p className="leading-relaxed whitespace-pre-wrap">{msg.message_text}</p>
+                          </div>
+                          <span className="text-[9px] text-gray-500 mt-1 font-mono">
+                            {new Date(msg.created_at).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      );
+                    })
+                  )}
+                  <div ref={messagesEndRef} />
+                </div>
+
+                {/* Message Input Form */}
+                <form onSubmit={handleSendMessage} className="border-t border-[#24303f] pt-4 mt-3">
+                  {attachmentUrl && (
+                    <div className="mb-3 p-2 bg-[#24303f]/55 border border-[#24303f] rounded-xl flex items-center justify-between text-xs text-gray-300">
+                      <div className="flex items-center gap-2 truncate">
+                        {attachmentType === 'image' ? <Image className="w-4 h-4 text-[#2481cc]" /> : <FileText className="w-4 h-4 text-amber-500" />}
+                        <span className="truncate font-mono text-[10px]">{attachmentName || 'Attached Upload'}</span>
+                      </div>
+                      <button 
+                        type="button" 
+                        onClick={() => { setAttachmentUrl(''); setAttachmentName(''); setAttachmentType(undefined); }}
+                        className="text-rose-400 hover:text-rose-500 text-[10px] font-bold px-2 py-1 bg-rose-500/10 hover:bg-rose-500/20 rounded border border-rose-500/15"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="flex items-center gap-2 relative">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingAttachment || isSendingMessage}
+                      className="p-2.5 bg-[#24303f]/50 hover:bg-[#24303f] text-gray-400 hover:text-white rounded-xl transition border border-[#24303f]"
+                    >
+                      {isUploadingAttachment ? <Loader className="w-4 h-4 animate-spin text-[#2481cc]" /> : <Paperclip className="w-4 h-4" />}
+                    </button>
+                    <input 
+                      type="text"
+                      placeholder="Type a secure message for portal managers..."
+                      value={newMessageText}
+                      onChange={(e) => setNewMessageText(e.target.value)}
+                      disabled={isSendingMessage}
+                      className="flex-1 bg-[#24303f]/50 border border-[#24303f] rounded-xl px-4 py-2.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-[#2481cc] transition"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isSendingMessage || isUploadingAttachment || (!newMessageText.trim() && !attachmentUrl)}
+                      className="p-2.5 bg-[#2481cc] hover:bg-[#179cde] disabled:bg-[#2481cc]/40 text-white rounded-xl transition shadow shadow-[#2481cc]/25"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Return Button */}

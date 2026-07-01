@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express, { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import crypto from 'crypto';
@@ -38,9 +39,6 @@ import {
   createWithdrawalRequest
 } from './server/db';
 import { upload, uploadToStorage } from './server/upload';
-
-// Initialize dotenv in development if not already loaded by tsx/node
-import 'dotenv/config';
 
 async function startServer() {
   const app = express();
